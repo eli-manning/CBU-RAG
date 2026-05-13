@@ -30,10 +30,17 @@ CHROMA_PORT = 8000
 CBU_SEED_URLS = [
     "https://www.calbaptist.edu/academics/",
     "https://www.calbaptist.edu/admissions/",
-    "https://www.calbaptist.edu/student-life/",
+    "https://calbaptist.edu/life-at-cbu/",
     "https://www.calbaptist.edu/about/",
     "https://www.calbaptist.edu/engineering/",
-    "https://www.calbaptist.edu/computer-science/",
+    "https://calbaptist.edu/academics/programs/bachelor-of-science-computer-science/",
+    "https://calbaptist.edu/academics/programs/minor-computer-science",
+    "https://calbaptist.edu/academics/programs/minor-computer-engineering",
+    "https://calbaptist.edu/academics/programs/master-of-science-computer-science/",
+    "https://calbaptist.edu/academics/programs/minor-data-sciences",
+    "https://calbaptist.edu/academics/programs/bachelor-of-science-data-science/",
+    "https://calbaptist.edu/academics/programs/bachelor-of-science-electrical-and-computer-engineering/",
+    "https://calbaptist.edu/academics/programs/minor-software-engineering-and-app-development"
 ]
 
 client = chromadb.HttpClient(host=CHROMA_HOST, port=CHROMA_PORT)
