@@ -14,7 +14,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="CBU RAG Server")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(CORSMiddleware, allow_origins=[
+                   "*"], allow_methods=["*"], allow_headers=["*"])
 
 # --- Config ---
 LLM_MODEL = "qwen2.5:1.5b"       # swap to llama3.1:8b on DGX
@@ -23,10 +24,13 @@ CHROMA_HOST = "localhost"
 CHROMA_PORT = 8000
 TOP_K = 5
 
-SYSTEM_PROMPT = """You are Lancer, CBU's friendly AI assistant. Help students, faculty,
-and visitors with questions about California Baptist University — programs, campus life,
-events, policies, and more. Be concise and warm. Answer in 2-4 sentences.
-If you don't know something, say so honestly rather than guessing."""
+SYSTEM_PROMPT = """You are Lancer, CBU's ACM AI. Use the provided context to answer questions.
+
+STRICT CONSTRAINTS:
+- Answer in EXACTLY 2 to 3 sentences.
+- Use plain text ONLY. No bolding (**), no headers (###), and no lists.
+- If you don't know the answer based on the context, say: "I'm sorry, I don't have that specific information in my current database."
+- Focus only on the specific question asked."""
 
 chroma_client = chromadb.HttpClient(host=CHROMA_HOST, port=CHROMA_PORT)
 collection = chroma_client.get_or_create_collection(
