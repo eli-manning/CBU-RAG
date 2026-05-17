@@ -21,8 +21,14 @@ app.add_middleware(CORSMiddleware, allow_origins=[
 LLM_MODEL = "qwen2.5:1.5b"       # swap to llama3.1:8b on DGX
 EMBED_MODEL = "nomic-embed-text"
 CHROMA_HOST = "localhost"
-CHROMA_PORT = 8000
+CHROMA_PORT = 8001
 TOP_K = 5
+ROBOT_ENABLED = False  # Set to True if robot is connected
+robot = None
+
+if ROBOT_ENABLED:
+    from robot_actions import LancerRobot
+    robot = LancerRobot()
 
 SYSTEM_PROMPT = """You are Lancer, CBU's ACM AI. Use the provided context to answer questions.
 
@@ -66,6 +72,8 @@ def retrieve(query: str) -> tuple[str, list[str]]:
 async def chat(req: ChatRequest):
     try:
         context, sources = retrieve(req.query)
+        if robot:
+            robot.thinking()
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "system", "content": f"Use this CBU info to answer:\n\n{context}"},
@@ -73,8 +81,17 @@ async def chat(req: ChatRequest):
             {"role": "user", "content": req.query},
         ]
         response = ollama.chat(model=LLM_MODEL, messages=messages)
+        output = response["message"]["content"]
+        is_unknown = "don't have that specific information" in output
+
+        if robot:
+            if is_unknown:
+                robot.confused()
+            else:
+                robot.answering()
+                robot.speak(output)
         return ChatResponse(
-            answer=response["message"]["content"],
+            answer=output,
             sources=sources,
             model_used=LLM_MODEL
         )
@@ -91,3 +108,10 @@ async def health():
 @app.get("/count")
 async def count():
     return {"docs": collection.count()}
+
+
+@app.post("/greet")
+async def greet():
+    if robot:
+        robot.greet()
+    return {"status": "greeted"}
