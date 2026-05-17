@@ -1,6 +1,18 @@
 """
 CBU Chatbot - RAG Server
 Run: uvicorn server:app --host 0.0.0.0 --port 7860
+
+Two modes depending on ROBOT_ENABLED:
+
+  ROBOT_ENABLED = False (default)
+    HTTP-only mode. The TUI and any web client POST to /chat and get a JSON response.
+    No robot code is imported.
+
+  ROBOT_ENABLED = True
+    Voice mode. On startup, a background voice_loop() task listens via the robot's
+    microphone, runs each utterance through RAG, and speaks the answer aloud.
+    The /chat HTTP endpoint still works (for the TUI), but a _conversation_lock
+    prevents voice and HTTP from running RAG simultaneously.
 """
 
 import asyncio
@@ -16,20 +28,23 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # --- Config ---
-LLM_MODEL = "qwen2.5:1.5b"       # swap to llama3.1:8b on DGX
+LLM_MODEL = "qwen2.5:1.5b"   # swap to llama3.1:8b on DGX
 EMBED_MODEL = "nomic-embed-text"
 CHROMA_HOST = "localhost"
 CHROMA_PORT = 8001
-TOP_K = 5
-ROBOT_ENABLED = False  # Set to True if robot is connected
+TOP_K = 5                     # number of ChromaDB chunks to retrieve per query
+ROBOT_ENABLED = False         # set to True when the Reachy Mini is connected
 
 robot = None
+# Ensures the robot finishes speaking before starting the next TTS call.
 _speak_lock = asyncio.Lock()
-_conversation_lock = asyncio.Lock()  # prevents voice and HTTP from overlapping
+# Ensures voice loop and HTTP endpoint don't run RAG at the same time.
+_conversation_lock = asyncio.Lock()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Start robot + voice loop on server boot; clean up on shutdown."""
     global robot
     if ROBOT_ENABLED:
         from robot_actions import LancerRobot
@@ -72,6 +87,7 @@ class ChatResponse(BaseModel):
 
 
 def retrieve(query: str) -> tuple[str, list[str]]:
+    """Embed the query and fetch the top-K most similar chunks from ChromaDB."""
     embedding = ollama.embeddings(model=EMBED_MODEL, prompt=query)["embedding"]
     results = collection.query(
         query_embeddings=[embedding],
@@ -84,14 +100,19 @@ def retrieve(query: str) -> tuple[str, list[str]]:
 
 
 async def _process_query(query: str, history: list[dict] = []) -> tuple[str, list[str]]:
-    """Shared RAG logic used by both the HTTP endpoint and the voice loop."""
+    """
+    Core RAG logic shared by both the HTTP endpoint and the voice loop.
+    Retrieves context from ChromaDB, triggers the thinking gesture, then
+    calls Ollama with the system prompt + context + conversation history.
+    Returns (answer_text, source_list).
+    """
     context, sources = retrieve(query)
     if robot:
         robot.thinking()
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "system", "content": f"Use this CBU info to answer:\n\n{context}"},
-        *history[-6:],
+        *history[-6:],  # keep last 3 turns (6 messages) for conversational context
         {"role": "user", "content": query},
     ]
     response = ollama.chat(model=LLM_MODEL, messages=messages)
@@ -99,7 +120,12 @@ async def _process_query(query: str, history: list[dict] = []) -> tuple[str, lis
 
 
 async def _respond_with_robot(output: str) -> None:
-    """Handle robot reactions and blocking TTS after a query is answered."""
+    """
+    Trigger the appropriate robot reaction after a query is answered.
+    If the LLM admitted it doesn't know, play the confused gesture (which
+    also speaks the fallback phrase). Otherwise return to neutral and speak
+    the answer — serialized through _speak_lock so concurrent calls queue up.
+    """
     is_unknown = "don't have that specific information" in output
     if is_unknown:
         robot.confused()
@@ -110,9 +136,18 @@ async def _respond_with_robot(output: str) -> None:
 
 
 async def voice_loop() -> None:
-    """Continuous listen → RAG → speak loop, runs as a background task when ROBOT_ENABLED."""
+    """
+    Background task that drives the robot in voice mode.
+
+    Loop:
+      - Idle: face tracking + DoA orientation threads are running
+      - listen_for_question() blocks in a thread pool until speech is captured and transcribed
+      - Idle behaviors are paused for the duration of the conversation
+      - RAG runs, robot reacts, then idle behaviors restart
+    """
     robot.start_idle_behaviors()
     while True:
+        # Runs in a thread pool — blocks without holding the event loop.
         question = await asyncio.to_thread(robot.listen_for_question)
         if not question:
             continue
@@ -132,6 +167,10 @@ async def voice_loop() -> None:
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest):
+    """
+    HTTP chat endpoint — used by the TUI and any web client.
+    Acquires _conversation_lock so it can't overlap with the voice loop.
+    """
     try:
         async with _conversation_lock:
             if robot:
