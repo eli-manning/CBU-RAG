@@ -25,7 +25,7 @@ EMBED_MODEL = "nomic-embed-text"
 CHUNK_SIZE = 500
 CHUNK_OVERLAP = 50
 CHROMA_HOST = "localhost"
-CHROMA_PORT = 8000
+CHROMA_PORT = 8001
 
 CBU_SEED_URLS = [
     "https://www.calbaptist.edu/academics/",
