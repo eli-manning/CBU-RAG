@@ -3,7 +3,9 @@ CBU Chatbot - RAG Server
 Run: uvicorn server:app --host 0.0.0.0 --port 7860
 """
 
+import asyncio
 import logging
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -13,10 +15,6 @@ import ollama
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="CBU RAG Server")
-app.add_middleware(CORSMiddleware, allow_origins=[
-                   "*"], allow_methods=["*"], allow_headers=["*"])
-
 # --- Config ---
 LLM_MODEL = "qwen2.5:1.5b"       # swap to llama3.1:8b on DGX
 EMBED_MODEL = "nomic-embed-text"
@@ -24,11 +22,24 @@ CHROMA_HOST = "localhost"
 CHROMA_PORT = 8001
 TOP_K = 5
 ROBOT_ENABLED = False  # Set to True if robot is connected
-robot = None
 
-if ROBOT_ENABLED:
-    from robot_actions import LancerRobot
-    robot = LancerRobot()
+robot = None
+_speak_lock = asyncio.Lock()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global robot
+    if ROBOT_ENABLED:
+        from robot_actions import LancerRobot
+        robot = LancerRobot()
+        robot.greet()
+    yield
+
+
+app = FastAPI(title="CBU RAG Server", lifespan=lifespan)
+app.add_middleware(CORSMiddleware, allow_origins=[
+                   "*"], allow_methods=["*"], allow_headers=["*"])
 
 SYSTEM_PROMPT = """You are Lancer, CBU's ACM AI. Use the provided context to answer questions.
 
@@ -89,7 +100,8 @@ async def chat(req: ChatRequest):
                 robot.confused()
             else:
                 robot.answering()
-                robot.speak(output)
+                async with _speak_lock:
+                    await asyncio.to_thread(robot.speak, output)
         return ChatResponse(
             answer=output,
             sources=sources,

@@ -30,7 +30,7 @@ Open 3 terminal tabs in this directory.
 **Tab 1 — ChromaDB**
 ```bash
 source .venv/bin/activate
-chroma run --host localhost --port 8000 --path ./chroma_data
+chroma run --host localhost --port 8001 --path ./chroma_data
 ```
 
 **Tab 2 — RAG Server**
@@ -107,11 +107,30 @@ CHROMA_HOST = "localhost"     →   CHROMA_HOST = "dgx.your-tailnet.ts.net"
 
 ---
 
+## Connecting the Reachy Mini
+
+In `server.py`, set:
+```python
+ROBOT_ENABLED = True
+```
+
+On startup, Lancer will greet automatically. During chat:
+- **Thinking** — head tilts right while the RAG query runs
+- **Answering** — head returns to neutral, robot speaks the response aloud
+- **Confused** — antennas droop + slight head dip when it can't find context
+
+Concurrent requests are serialized through a lock so the robot finishes speaking before starting the next response.
+
+**Firmware requirement:** `reachy-mini >= 1.5.1`. Verify your robot's firmware matches before connecting — mismatched versions can cause unexpected joint behavior.
+
+---
+
 ## File overview
 
 | File | What it does |
 |---|---|
-| `server.py` | FastAPI RAG server — retrieval + Ollama inference |
+| `server.py` | FastAPI RAG server — retrieval + Ollama inference + robot control |
+| `robot_actions.py` | `LancerRobot` wrapper — head poses, antenna animations, TTS |
 | `ingest.py` | Scrapes/chunks/embeds CBU content into ChromaDB |
 | `requirements.txt` | Python dependencies |
 | `chroma_data/` | Persistent vector DB (git-ignored) |
