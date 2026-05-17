@@ -1,6 +1,6 @@
 # CBU RAG Server
 
-Local RAG pipeline for the CBU Lancer chatbot. Runs ChromaDB + Ollama on your Mac during development, swaps to DGX for production.
+Local RAG pipeline for the CBU Lancer chatbot. Runs ChromaDB + Ollama on DGX.
 
 ---
 
@@ -114,12 +114,15 @@ In `server.py`, set:
 ROBOT_ENABLED = True
 ```
 
-On startup, Lancer will greet automatically. During chat:
-- **Thinking** — head tilts right while the RAG query runs
-- **Answering** — head returns to neutral, robot speaks the response aloud
-- **Confused** — antennas droop + slight head dip when it can't find context
+When enabled, the server runs in **voice mode** — it no longer waits for HTTP requests to drive conversation. Instead:
 
-Concurrent requests are serialized through a lock so the robot finishes speaking before starting the next response.
+1. **Idle** — Lancer continuously tracks faces with its camera and rotates toward anyone speaking (DoA via the ReSpeaker mic array)
+2. **Listening** — webrtcvad detects speech onset; the robot records until 1.5s of silence
+3. **Thinking** — head tilts while the utterance runs through RAG
+4. **Answering** — head returns to neutral and the robot speaks the response via its built-in TTS
+5. **Confused** — antennas droop + slight head dip when it can't find relevant context
+
+The HTTP `/chat` endpoint still works when the robot is connected (for the TUI or remote clients), but it shares the same conversation lock so voice and HTTP can't overlap.
 
 **Firmware requirement:** `reachy-mini >= 1.5.1`. Verify your robot's firmware matches before connecting — mismatched versions can cause unexpected joint behavior.
 
@@ -130,7 +133,7 @@ Concurrent requests are serialized through a lock so the robot finishes speaking
 | File | What it does |
 |---|---|
 | `server.py` | FastAPI RAG server — retrieval + Ollama inference + robot control |
-| `robot_actions.py` | `LancerRobot` wrapper — head poses, antenna animations, TTS |
+| `robot_actions.py` | `LancerRobot` — voice loop, face tracking, DoA, head poses, TTS |
 | `ingest.py` | Scrapes/chunks/embeds CBU content into ChromaDB |
 | `requirements.txt` | Python dependencies |
 | `chroma_data/` | Persistent vector DB (git-ignored) |

@@ -25,6 +25,7 @@ ROBOT_ENABLED = False  # Set to True if robot is connected
 
 robot = None
 _speak_lock = asyncio.Lock()
+_conversation_lock = asyncio.Lock()  # prevents voice and HTTP from overlapping
 
 
 @asynccontextmanager
@@ -34,7 +35,10 @@ async def lifespan(app: FastAPI):
         from robot_actions import LancerRobot
         robot = LancerRobot()
         robot.greet()
+        asyncio.create_task(voice_loop())
     yield
+    if robot:
+        robot.stop_idle_behaviors()
 
 
 app = FastAPI(title="CBU RAG Server", lifespan=lifespan)
@@ -79,34 +83,68 @@ def retrieve(query: str) -> tuple[str, list[str]]:
     return "\n\n---\n\n".join(docs), sources
 
 
+async def _process_query(query: str, history: list[dict] = []) -> tuple[str, list[str]]:
+    """Shared RAG logic used by both the HTTP endpoint and the voice loop."""
+    context, sources = retrieve(query)
+    if robot:
+        robot.thinking()
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": f"Use this CBU info to answer:\n\n{context}"},
+        *history[-6:],
+        {"role": "user", "content": query},
+    ]
+    response = ollama.chat(model=LLM_MODEL, messages=messages)
+    return response["message"]["content"], sources
+
+
+async def _respond_with_robot(output: str) -> None:
+    """Handle robot reactions and blocking TTS after a query is answered."""
+    is_unknown = "don't have that specific information" in output
+    if is_unknown:
+        robot.confused()
+    else:
+        robot.answering()
+        async with _speak_lock:
+            await asyncio.to_thread(robot.speak, output)
+
+
+async def voice_loop() -> None:
+    """Continuous listen → RAG → speak loop, runs as a background task when ROBOT_ENABLED."""
+    robot.start_idle_behaviors()
+    while True:
+        question = await asyncio.to_thread(robot.listen_for_question)
+        if not question:
+            continue
+
+        logger.info(f"[voice] heard: {question!r}")
+
+        async with _conversation_lock:
+            robot.stop_idle_behaviors()
+            try:
+                output, _ = await _process_query(question)
+                await _respond_with_robot(output)
+            except Exception as e:
+                logger.error(f"[voice] error: {e}")
+            finally:
+                robot.start_idle_behaviors()
+
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest):
     try:
-        context, sources = retrieve(req.query)
-        if robot:
-            robot.thinking()
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "system", "content": f"Use this CBU info to answer:\n\n{context}"},
-            *req.conversation_history[-6:],
-            {"role": "user", "content": req.query},
-        ]
-        response = ollama.chat(model=LLM_MODEL, messages=messages)
-        output = response["message"]["content"]
-        is_unknown = "don't have that specific information" in output
+        async with _conversation_lock:
+            if robot:
+                robot.stop_idle_behaviors()
+            try:
+                output, sources = await _process_query(req.query, req.conversation_history)
+                if robot:
+                    await _respond_with_robot(output)
+            finally:
+                if robot:
+                    robot.start_idle_behaviors()
 
-        if robot:
-            if is_unknown:
-                robot.confused()
-            else:
-                robot.answering()
-                async with _speak_lock:
-                    await asyncio.to_thread(robot.speak, output)
-        return ChatResponse(
-            answer=output,
-            sources=sources,
-            model_used=LLM_MODEL
-        )
+        return ChatResponse(answer=output, sources=sources, model_used=LLM_MODEL)
     except Exception as e:
         logger.error(f"Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
