@@ -197,10 +197,3 @@ async def health():
 @app.get("/count")
 async def count():
     return {"docs": collection.count()}
-
-
-@app.post("/greet")
-async def greet():
-    if robot:
-        robot.greet()
-    return {"status": "greeted"}

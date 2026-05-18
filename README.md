@@ -39,10 +39,13 @@ source .venv/bin/activate
 uvicorn server:app --host 0.0.0.0 --port 7860
 ```
 
-**Tab 3 — Your workspace** (ingest, test, etc.)
+**Tab 3 — TUI chat** (or your workspace)
 ```bash
 source .venv/bin/activate
+python tui_chat.py 2>/dev/null
 ```
+
+The `2>/dev/null` suppresses Ollama's llama.cpp loader logs which would otherwise clutter the chat output.
 
 Ollama runs in the background automatically via brew services — no tab needed.
 
