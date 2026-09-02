@@ -79,16 +79,19 @@ _MAX_UTTERANCE = 15.0        # hard cap so a noisy room can't record forever
 # The board runs software AEC, so the mic feed has most of Lancer's own voice
 # removed -- but not all of it, so the barge-in gate sits above the speech gate.
 _BARGE_MULTIPLIER = 1.6      # barge-in floor relative to the speech gate
-_BARGE_CHUNKS = 3            # consecutive loud reads before we accept an interrupt
+_BARGE_CHUNKS = 5            # consecutive loud reads before we accept an interrupt
 _BARGE_GRACE = 0.8           # seconds of playback before barge-in can trigger
 _POST_SPEECH_DRAIN = 0.6     # seconds of mic input discarded after Lancer speaks
 _BARGE_ECHO_HEADROOM = 1.4   # interrupt must exceed measured echo by this factor
 
 # --- Direction of arrival ---
 _DOA_INTERVAL = 0.05         # seconds between DoA polls (ReSpeaker updates ~20Hz)
-_DOA_DEADBAND = 0.45         # radians (~26 deg) of change before the body moves
+_DOA_DEADBAND = 0.28         # radians (~16 deg) of change before the body moves
 _DOA_MIN_INTERVAL = 1.5      # seconds between body turns, so it cannot jitter
 _DOA_SUSTAIN = 2             # consecutive speech reads before turning
+_DOA_REACQUIRE = 1.2         # seconds to find someone before turning again
+_DOA_RETRY_INTERVAL = 0.6    # shortened gap between turns while re-acquiring
+_DOA_HOLD = 2.0              # seconds automatic body yaw stays off after a turn
 _FACE_STICKY = 6.0           # seconds a face still counts as present after loss
 
 # --- Hybrid vision ---
@@ -97,6 +100,8 @@ _FACE_STICKY = 6.0           # seconds a face still counts as present after loss
 # gives up. YuNet stays as the fallback when the Mac is unreachable.
 _TRACK_INTERVAL = 0.12       # seconds between frames sent for detection
 _TRACK_FALLBACK_AFTER = 2.0  # seconds without a YOLO hit before handing back
+_FACE_PRIMARY_GRACE = 0.8    # seconds a face must be gone before YOLO takes over
+_YOLO_IDLE_INTERVAL = 0.4    # slower polling while YuNet is doing the work
 _TRACK_AIM_DURATION = 0.5    # seconds for each look_at_image move
 # YOLO re-detects every frame and the box drifts a few pixels each time. Aiming
 # at the raw centre makes the head chase that noise, so smooth it and ignore
@@ -133,6 +138,7 @@ class Lancer:
         self._last_person = 0.0
         self.vision_mode = "yunet"
         self.request_aim_reset = False
+        self._auto_yaw_resume_at = 0.0
 
     @property
     def barge_rms(self) -> float:
@@ -363,7 +369,29 @@ class Lancer:
         sent_u = sent_v = None        # last position actually commanded
         last_move = 0.0
         while not stop_event.is_set():
-            time.sleep(_TRACK_INTERVAL)
+            # YuNet runs on the robot with no network hop, so it is much lower
+            # latency than shipping a frame to the Mac and back. Let it lead and
+            # only reach for YOLO when it has actually lost the person.
+            if self._face_visible():
+                self._last_face = time.monotonic()
+                if self.vision_mode != "yunet":
+                    self.mini.start_head_tracking(
+                        weight=float(self.opt("head_tracking_weight", 1.0))
+                    )
+                    self.vision_mode = "yunet"
+                    aim_u = aim_v = sent_u = sent_v = None
+                    logger.info("Vision: YuNet (face, on-device)")
+                time.sleep(_TRACK_INTERVAL)
+                continue
+
+            face_gone_for = time.monotonic() - self._last_face
+            if face_gone_for < _FACE_PRIMARY_GRACE:
+                # Brief dropout -- YuNet holds its aim, so do not interfere.
+                time.sleep(_TRACK_INTERVAL)
+                continue
+
+            time.sleep(_TRACK_INTERVAL if self.vision_mode == "yolo"
+                       else _YOLO_IDLE_INTERVAL)
             if self.speaking:
                 continue
             try:
@@ -453,6 +481,12 @@ class Lancer:
         sustained = 0
         while not stop_event.is_set():
             try:
+                # Give the body back to vision once the turn has had time to land.
+                if (self._auto_yaw_resume_at
+                        and time.monotonic() >= self._auto_yaw_resume_at):
+                    self.mini.set_automatic_body_yaw(True)
+                    self._auto_yaw_resume_at = 0.0
+
                 result = self.mini.media.get_DoA()
                 if result is not None:
                     raw, is_speech = result
@@ -477,24 +511,24 @@ class Lancer:
                         and not self.speaking
                         and (bool(self.opt("doa_priority", True))
                              or now - self._last_face >= _DOA_FACE_GRACE)
-                        and abs(angle - self._last_yaw) >= _DOA_DEADBAND
-                        and now - self._last_turn >= _DOA_MIN_INTERVAL
+                        and abs(angle - self._last_yaw) >= deadband
+                        and now - self._last_turn >= gap
                     ):
                         # Hand the body back to us briefly, turn, then return it
                         # to vision -- two writers at once makes the IK fail.
-                        try:
-                            self.mini.set_automatic_body_yaw(False)
-                            self.mini.set_target_body_yaw(angle)
-                            # Turning the body alone leaves the head pointing
-                            # wherever it last tracked someone. Centre it so the
-                            # camera actually looks where the sound came from.
-                            self.mini.goto_target(
-                                head=create_head_pose(), duration=0.4
-                            )
-                            self.request_aim_reset = True
-                        finally:
-                            self.mini.set_automatic_body_yaw(True)
-                        logger.info("Turned toward speech at %.2f rad", angle)
+                        # Automatic body yaw makes the body follow the head, so
+                        # switching it straight back on snapped the turn away
+                        # before it finished. Hold it off while we settle.
+                        self.mini.set_automatic_body_yaw(False)
+                        self.mini.set_target_body_yaw(angle)
+                        # Turning the body alone leaves the head pointing
+                        # wherever it last tracked someone. Centre it so the
+                        # camera actually looks where the sound came from.
+                        self.mini.goto_target(head=create_head_pose(), duration=0.4)
+                        self.request_aim_reset = True
+                        self._auto_yaw_resume_at = now + _DOA_HOLD
+                        logger.info("Turned toward speech at %.2f rad%s", angle,
+                                    " (re-acquiring)" if missed else "")
                         self._last_yaw = angle
                         self._last_turn = now
                         sustained = 0
@@ -587,6 +621,9 @@ class LancerApp(ReachyMiniApp):  # type: ignore[misc]
         # success. Motors first, then wake.
         reachy_mini.enable_motors()
         reachy_mini.wake_up()
+        # wake_up() leaves the antennas vertical, which is the unstable point
+        # where they visibly shake. Bias them off vertical straight away.
+        lancer.answering()
         # get_audio_sample() returns None until the audio device is recording.
         reachy_mini.acquire_media()
         reachy_mini.media.start_recording()
