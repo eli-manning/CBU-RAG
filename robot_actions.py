@@ -35,7 +35,7 @@ _DOA_INTERVAL = 0.05   # seconds between DoA polls (ReSpeaker updates at ~20Hz)
 _SAMPLE_RATE = 16000         # Hz — fixed requirement for both webrtcvad and Whisper
 _VAD_FRAME_MS = 30           # ms — webrtcvad only accepts 10, 20, or 30ms frames
 _VAD_FRAME_SAMPLES = _SAMPLE_RATE * _VAD_FRAME_MS // 1000
-_SILENCE_TIMEOUT = 1.5       # seconds of silence after speech before we stop recording
+_SILENCE_TIMEOUT = 0.7       # seconds of silence after speech before we stop recording
 
 # --- Module-level singletons (loaded once at import time) ---
 # Haar cascade ships with opencv-python — no separate download needed.
