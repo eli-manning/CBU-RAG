@@ -6,12 +6,13 @@ Usage:
     python ingest.py --url https://www.calbaptist.edu/academics/
     python ingest.py --seed          # scrape all default CBU URLs
     python ingest.py --pdf ./docs/handbook.pdf
-    python ingest.py --dir ./docs/
+    python ingest.py --dir ./docs/     # .txt, .pdf, .docx, .xlsx
     python ingest.py --reset         # wipe collection and start fresh
 """
 
 import argparse
 import hashlib
+import re
 import time
 from pathlib import Path
 
@@ -22,8 +23,12 @@ from bs4 import BeautifulSoup
 
 # --- Config ---
 EMBED_MODEL = "nomic-embed-text"
-CHUNK_SIZE = 500
-CHUNK_OVERLAP = 50
+# nomic-embed-text is trained with task prefixes; omitting them measurably
+# degrades retrieval. Documents and queries must use different prefixes.
+EMBED_DOC_PREFIX = "search_document: "
+CHUNK_SIZE = 220           # words -- smaller chunks retrieve far more precisely
+CHUNK_OVERLAP = 40
+MIN_CHUNK_WORDS = 20
 CHROMA_HOST = "localhost"
 CHROMA_PORT = 8001
 
@@ -50,27 +55,82 @@ collection = client.get_or_create_collection(
 )
 
 
+def _title_for(source: str) -> str:
+    """Human-readable document name, used as a per-chunk context header."""
+    name = Path(source).name if not source.startswith("http") else source
+    for ext in (".txt", ".pdf", ".docx", ".xlsx"):
+        name = name.replace(ext, "")
+    return name.replace("_", " ").replace("-", " ").strip()
+
+
+def _split_paragraphs(text: str) -> list[str]:
+    """Split on blank lines, falling back to single newlines for flat text."""
+    parts = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
+    if len(parts) <= 1:
+        parts = [p.strip() for p in text.split("\n") if p.strip()]
+    return parts or [text.strip()]
+
+
 def chunk_text(text: str, source: str) -> list[dict]:
-    words = text.split()
-    chunks = []
-    step = CHUNK_SIZE - CHUNK_OVERLAP
-    for i in range(0, len(words), step):
-        chunk = " ".join(words[i:i + CHUNK_SIZE])
-        if len(chunk.strip()) < 50:
-            continue
-        chunks.append({"text": chunk, "source": source})
+    """
+    Chunk on paragraph boundaries, packing up to CHUNK_SIZE words.
+
+    Splitting mid-sentence on a fixed word window scatters a single fact across
+    two chunks and neither retrieves well. Every chunk also carries the document
+    title so an isolated passage still says what it belongs to.
+    """
+    title = _title_for(source)
+    paragraphs = _split_paragraphs(text)
+
+    chunks: list[dict] = []
+    buf: list[str] = []
+    buf_words = 0
+
+    def flush():
+        nonlocal buf, buf_words
+        if buf_words >= MIN_CHUNK_WORDS:
+            body = " ".join(buf).strip()
+            chunks.append({
+                "text": f"{title}\n\n{body}",
+                "source": source,
+                "title": title,
+                "index": len(chunks),
+            })
+        buf, buf_words = [], 0
+
+    for para in paragraphs:
+        words = para.split()
+        if buf_words and buf_words + len(words) > CHUNK_SIZE:
+            tail = " ".join(buf).split()[-CHUNK_OVERLAP:]
+            flush()
+            buf, buf_words = [" ".join(tail)], len(tail)
+        buf.append(para)
+        buf_words += len(words)
+        while buf_words > CHUNK_SIZE:  # a single oversized paragraph
+            words_all = " ".join(buf).split()
+            head, rest = words_all[:CHUNK_SIZE], words_all[CHUNK_SIZE - CHUNK_OVERLAP:]
+            buf, buf_words = [" ".join(head)], len(head)
+            flush()
+            buf, buf_words = [" ".join(rest)], len(rest)
+    flush()
     return chunks
 
 
 def embed_and_store(chunks: list[dict]):
     for chunk in chunks:
         doc_id = hashlib.md5(chunk["text"].encode()).hexdigest()
-        embedding = ollama.embeddings(model=EMBED_MODEL, prompt=chunk["text"])["embedding"]
+        embedding = ollama.embeddings(
+            model=EMBED_MODEL, prompt=EMBED_DOC_PREFIX + chunk["text"]
+        )["embedding"]
         collection.upsert(
             ids=[doc_id],
             embeddings=[embedding],
             documents=[chunk["text"]],
-            metadatas=[{"source": chunk["source"]}]
+            metadatas=[{
+                "source": chunk["source"],
+                "title": chunk.get("title", ""),
+                "index": chunk.get("index", 0),
+            }],
         )
     print(f"  Stored {len(chunks)} chunks.")
 
@@ -102,14 +162,57 @@ def ingest_pdf(pdf_path: str):
         print("Install pymupdf: pip install pymupdf")
 
 
-def ingest_directory(dir_path: str):
-    for path in Path(dir_path).rglob("*"):
+def ingest_docx(docx_path: str):
+    try:
+        import docx
+        print(f"Ingesting DOCX: {docx_path}")
+        document = docx.Document(docx_path)
+        parts = [para.text for para in document.paragraphs if para.text.strip()]
+        for table in document.tables:
+            for row in table.rows:
+                cells = [c.text.strip() for c in row.cells if c.text.strip()]
+                if cells:
+                    parts.append(" | ".join(cells))
+        chunks = chunk_text("\n".join(parts), source=docx_path)
+        embed_and_store(chunks)
+    except ImportError:
+        print("Install python-docx: pip install python-docx")
+
+
+def ingest_xlsx(xlsx_path: str):
+    try:
+        import openpyxl
+        print(f"Ingesting XLSX: {xlsx_path}")
+        wb = openpyxl.load_workbook(xlsx_path, data_only=True)
+        parts = []
+        for sheet in wb.worksheets:
+            parts.append(f"Sheet: {sheet.title}")
+            for row in sheet.iter_rows(values_only=True):
+                cells = [str(c).strip() for c in row if c is not None and str(c).strip()]
+                if cells:
+                    parts.append(" | ".join(cells))
+        chunks = chunk_text("\n".join(parts), source=xlsx_path)
+        embed_and_store(chunks)
+    except ImportError:
+        print("Install openpyxl: pip install openpyxl")
+
+
+def ingest_directory(dir_path: str, skip_exts: tuple[str, ...] = ()):
+    handlers = {".pdf": ingest_pdf, ".docx": ingest_docx, ".xlsx": ingest_xlsx}
+    for path in sorted(Path(dir_path).rglob("*")):
+        if not path.is_file() or path.name.startswith("~$") or path.name == ".DS_Store":
+            continue
+        if path.suffix in skip_exts:
+            print(f"  Skipping {path.suffix} (converted separately): {path.name}")
+            continue
         if path.suffix == ".txt":
             print(f"Ingesting: {path}")
             text = path.read_text(errors="ignore")
             embed_and_store(chunk_text(text, str(path)))
-        elif path.suffix == ".pdf":
-            ingest_pdf(str(path))
+        elif path.suffix in handlers:
+            handlers[path.suffix](str(path))
+        else:
+            print(f"  Skipping unsupported file: {path.name}")
 
 
 if __name__ == "__main__":
@@ -118,6 +221,8 @@ if __name__ == "__main__":
     parser.add_argument("--seed", action="store_true", help="Scrape all seed URLs")
     parser.add_argument("--pdf", help="PDF to ingest")
     parser.add_argument("--dir", help="Directory of docs to ingest")
+    parser.add_argument("--skip-ext", nargs="*", default=[],
+                        help="Extensions to skip, e.g. --skip-ext .docx .xlsx")
     parser.add_argument("--reset", action="store_true", help="Wipe collection and exit")
     args = parser.parse_args()
 
@@ -132,7 +237,7 @@ if __name__ == "__main__":
     elif args.pdf:
         ingest_pdf(args.pdf)
     elif args.dir:
-        ingest_directory(args.dir)
+        ingest_directory(args.dir, tuple(args.skip_ext))
     else:
         parser.print_help()
 
