@@ -90,6 +90,40 @@ def get(key: str) -> Any:
     return load().get(key, DEFAULTS.get(key))
 
 
+# Ranges for settings where an out-of-range value breaks something downstream
+# rather than merely tuning it badly.
+LIMITS: dict[str, tuple[float, float]] = {
+    "tts_speed": (0.5, 2.0),          # Kokoro raises outside this
+    "temperature": (0.0, 2.0),
+    "top_k": (1, 20),
+    "dense_k": (1, 100),
+    "lexical_k": (1, 100),
+    "fuse_k": (1, 100),
+    "max_sentences": (1, 10),
+    "history_turns": (0, 40),
+    "speech_multiplier": (1.0, 10.0),
+    "speech_rms_ceiling": (0.005, 0.5),
+    "barge_echo_headroom": (1.0, 5.0),
+    "barge_grace": (0.0, 5.0),
+    "head_tracking_weight": (0.0, 1.0),
+    "aim_smoothing": (0.05, 1.0),
+    "aim_deadband_frac": (0.0, 0.3),
+}
+
+
+def _clamp(key: str, value: Any) -> Any:
+    limit = LIMITS.get(key)
+    if limit is None or isinstance(value, bool):
+        return value
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return value
+    low, high = limit
+    clamped = min(max(number, low), high)
+    return int(clamped) if isinstance(DEFAULTS.get(key), int) else clamped
+
+
 def update(changes: dict[str, Any]) -> dict[str, Any]:
     """Apply changes, keeping only known keys, and persist them."""
     global _cache
@@ -100,7 +134,7 @@ def update(changes: dict[str, Any]) -> dict[str, Any]:
         current = {**DEFAULTS, **existing}
         for key, value in changes.items():
             if key in DEFAULTS:
-                current[key] = value
+                current[key] = _clamp(key, value)
         CONFIG_PATH.write_text(json.dumps(current, indent=2))
         _cache = current
         try:
