@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lancer Control</title>
+<style>
+  :root{
+    --bg:#0e1116; --panel:#161b22; --line:#242c37; --ink:#e6edf3;
+    --dim:#8b949e; --accent:#e8913a; --ok:#3fb950; --bad:#f85149; --blue:#58a6ff;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:14px/1.5 ui-sans-serif,-apple-system,"SF Pro Text",system-ui,sans-serif}
+  header{display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+         padding:14px 20px;border-bottom:1px solid var(--line);background:var(--panel)}
+  h1{font-size:16px;margin:0;letter-spacing:.3px}
+  h1 span{color:var(--accent)}
+  .pills{display:flex;gap:8px;flex-wrap:wrap;margin-left:auto}
+  .pill{font-size:12px;padding:4px 10px;border:1px solid var(--line);border-radius:999px;color:var(--dim)}
+  .pill b{color:var(--ink);font-weight:600}
+  .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px;background:var(--bad)}
+  .dot.on{background:var(--ok)}
+  main{display:grid;grid-template-columns:1.15fr .85fr;gap:16px;padding:16px;align-items:start}
+  @media(max-width:1000px){main{grid-template-columns:1fr}}
+  section{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  section>h2{font-size:12px;text-transform:uppercase;letter-spacing:.09em;color:var(--dim);
+             margin:0;padding:11px 14px;border-bottom:1px solid var(--line);
+             display:flex;align-items:center;gap:10px}
+  section>h2 .sp{margin-left:auto;display:flex;gap:6px}
+  .body{padding:14px}
+  button{font:inherit;font-size:12px;padding:5px 11px;border-radius:6px;cursor:pointer;
+         background:#21262d;border:1px solid var(--line);color:var(--ink)}
+  button:hover{border-color:var(--dim)}
+  button.pri{background:var(--accent);border-color:var(--accent);color:#1b1206;font-weight:600}
+  button.danger{color:var(--bad)}
+  #log{height:44vh;overflow-y:auto;display:flex;flex-direction:column;gap:10px;padding:14px}
+  .turn{display:flex;flex-direction:column;gap:4px}
+  .who{font-size:11px;color:var(--dim);letter-spacing:.05em}
+  .msg{padding:9px 12px;border-radius:9px;background:#1c232c;white-space:pre-wrap}
+  .turn.you .msg{background:#1a2331;border:1px solid #223048}
+  .turn.bot .msg{border:1px solid var(--line)}
+  .src{font-size:11px;color:var(--dim)}
+  .unk .msg{border-color:#4a2c1a}
+  .ask{display:flex;gap:8px;padding:12px 14px;border-top:1px solid var(--line)}
+  .ask input{flex:1;background:#0d1117;border:1px solid var(--line);border-radius:7px;
+             color:var(--ink);padding:8px 11px;font:inherit}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .fld{display:flex;flex-direction:column;gap:5px}
+  .fld label{font-size:11px;color:var(--dim)}
+  .fld input,.fld select{background:#0d1117;border:1px solid var(--line);border-radius:6px;
+                         color:var(--ink);padding:6px 9px;font:inherit}
+  .fld.wide{grid-column:1/-1}
+  .grp{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--accent);
+       margin:16px 0 2px;grid-column:1/-1}
+  .grp:first-child{margin-top:0}
+  .chk{display:flex;align-items:center;gap:8px}
+  pre{margin:0;white-space:pre-wrap;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
+  .res{border:1px solid var(--line);border-radius:8px;padding:10px;margin-top:9px;background:#0d1117}
+  .res .h{display:flex;gap:8px;font-size:11px;color:var(--dim);margin-bottom:6px}
+  .res .h b{color:var(--blue)}
+  .note{font-size:11px;color:var(--dim);margin-top:8px}
+  .toast{position:fixed;right:16px;bottom:16px;background:var(--panel);border:1px solid var(--line);
+         border-radius:8px;padding:10px 14px;opacity:0;transition:.2s;pointer-events:none}
+  .toast.show{opacity:1}
+</style>
+</head>
+<body>
+<header>
+  <h1>Lancer <span>Control</span></h1>
+  <div class="pills" id="pills"></div>
+</header>
+
+<main>
+  <div style="display:flex;flex-direction:column;gap:16px">
+    <section>
+      <h2>Conversation
+        <span class="sp">
+          <button onclick="refreshLog()">Refresh</button>
+          <button class="danger" onclick="clearLog()">Clear</button>
+        </span>
+      </h2>
+      <div id="log"></div>
+      <div class="ask">
+        <input id="q" placeholder="Ask Lancer something (same RAG path as voice)…"
+               onkeydown="if(event.key==='Enter')ask()">
+        <button class="pri" onclick="ask()">Send</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Retrieval inspector</h2>
+      <div class="body">
+        <div class="ask" style="padding:0;border:0">
+          <input id="rq" placeholder="Query to inspect — see chunks and rerank score"
+                 onkeydown="if(event.key==='Enter')inspect()">
+          <button onclick="inspect()">Inspect</button>
+        </div>
+        <div id="rout"></div>
+      </div>
+    </section>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:16px">
+    <section>
+      <h2>Robot
+        <span class="sp">
+          <button onclick="robot('start')">Start app</button>
+          <button onclick="robot('stop')">Stop</button>
+          <button onclick="robot('test-sound')">Test sound</button>
+        </span>
+      </h2>
+      <div class="body">
+        <div class="fld">
+          <label>Speaker volume — <span id="volv">—</span></label>
+          <input type="range" id="vol" min="0" max="100" step="5"
+                 onchange="setVolume(this.value)">
+        </div>
+        <div class="note" id="rstat">…</div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Configuration
+        <span class="sp">
+          <button class="pri" onclick="saveCfg()">Save</button>
+          <button onclick="resetCfg()">Defaults</button>
+        </span>
+      </h2>
+      <div class="body"><div class="grid" id="cfg"></div>
+        <div class="note">Generation, retrieval and speech settings apply to the next
+          question. Robot behaviour settings are read when the app starts, so restart
+          it after changing them.</div>
+      </div>
+    </section>
+  </div>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+const F = (u,o)=>fetch(u,o).then(r=>r.json());
+let CFG={}, DEF={}, MODELS=[], VOICES=[];
+
+function toast(m){const t=document.getElementById('toast');t.textContent=m;
+  t.classList.add('show');setTimeout(()=>t.classList.remove('show'),1800);}
+
+const GROUPS = {
+  "Generation":["llm_model","temperature","max_sentences","history_turns","persona"],
+  "Retrieval":["top_k","dense_k","lexical_k","fuse_k","rerank_enabled","relevance_min"],
+  "Speech":["tts_voice","tts_speed","whisper_model"],
+  "Robot behaviour":["speech_multiplier","speech_rms_ceiling","barge_enabled",
+    "barge_echo_headroom","barge_grace","doa_enabled","doa_priority","head_tracking_weight"]
+};
+
+function field(k,v){
+  const id='f_'+k, label=k.replace(/_/g,' ');
+  if(typeof v === 'boolean')
+    return `<div class="fld"><label>${label}</label><div class="chk">
+      <input type="checkbox" id="${id}" ${v?'checked':''}></div></div>`;
+  if(k==='llm_model'||k==='tts_voice'||k==='whisper_model'){
+    const opts = k==='llm_model'?MODELS : k==='tts_voice'?VOICES : ['tiny.en','base.en','small.en','medium.en'];
+    const list = opts.length?opts:[v];
+    return `<div class="fld"><label>${label}</label><select id="${id}">`+
+      list.map(o=>`<option ${o===v?'selected':''}>${o}</option>`).join('')+`</select></div>`;
+  }
+  const wide = k==='persona' ? ' wide' : '';
+  return `<div class="fld${wide}"><label>${label}</label>
+    <input id="${id}" value="${v===null?'':String(v).replace(/"/g,'&quot;')}"></div>`;
+}
+
+async function loadCfg(){
+  const [c,m,v] = await Promise.all([F('/api/config'),F('/api/models'),F('/api/voices')]);
+  CFG=c.config; DEF=c.defaults; MODELS=m.models||[]; VOICES=v.voices||[];
+  document.getElementById('cfg').innerHTML =
+    Object.entries(GROUPS).map(([g,keys])=>
+      `<div class="grp">${g}</div>`+keys.filter(k=>k in CFG).map(k=>field(k,CFG[k])).join('')
+    ).join('');
+}
+async function saveCfg(){
+  const changes={};
+  for(const k of Object.keys(CFG)){
+    const el=document.getElementById('f_'+k); if(!el) continue;
+    if(el.type==='checkbox') changes[k]=el.checked;
+    else if(typeof DEF[k]==='number') changes[k]=parseFloat(el.value);
+    else changes[k]=el.value;
+  }
+  const r=await F('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({changes})}); CFG=r.config; toast('Saved'); loadCfg();
+}
+async function resetCfg(){const r=await F('/api/config/reset',{method:'POST'});
+  CFG=r.config; toast('Defaults restored'); loadCfg();}
+
+function esc(s){return (s||'').replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));}
+async function refreshLog(){
+  const {history}=await F('/api/history?limit=100');
+  const box=document.getElementById('log');
+  box.innerHTML = history.length? history.map(h=>{
+    const src=(h.sources||[]).map(s=>s.split('/').pop()).slice(0,2).join(', ');
+    return `<div class="turn you"><div class="who">${new Date(h.ts*1000)
+      .toLocaleTimeString()}${h.via==='dashboard'?' · typed':' · voice'}</div>
+      <div class="msg">${esc(h.heard)}</div></div>
+      <div class="turn bot ${h.unknown?'unk':''}"><div class="who">Lancer</div>
+      <div class="msg">${esc(h.answer)}</div>
+      ${src?`<div class="src">${esc(src)}</div>`:''}</div>`;
+  }).join('') : '<div class="src">No conversation yet.</div>';
+  box.scrollTop=box.scrollHeight;
+}
+async function clearLog(){await fetch('/api/history',{method:'DELETE'});refreshLog();}
+async function ask(){
+  const el=document.getElementById('q'); const q=el.value.trim(); if(!q)return;
+  el.value=''; toast('Thinking…');
+  await F('/api/ask',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({query:q})}); refreshLog();
+}
+async function inspect(){
+  const q=document.getElementById('rq').value.trim(); if(!q)return;
+  const out=document.getElementById('rout'); out.innerHTML='<div class="src">Retrieving…</div>';
+  const r=await F('/api/retrieve',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({query:q})});
+  out.innerHTML = `<div class="note">relevant: <b>${r.relevant}</b> · best rerank score:
+    <b>${r.best_score===null?'n/a':r.best_score.toFixed(2)}</b></div>` +
+    r.results.map((x,i)=>`<div class="res"><div class="h">#${i+1}
+      <b>${esc(x.source)}</b></div><pre>${esc(x.text)}</pre></div>`).join('');
+}
+async function robot(a){toast(a+'…');
+  try{await fetch('/api/robot/'+a,{method:'POST'});}catch(e){}
+  setTimeout(status,1200);}
+async function setVolume(v){await fetch('/api/robot/volume?volume='+v,{method:'POST'});
+  document.getElementById('volv').textContent=v;}
+async function status(){
+  const [s,st]=await Promise.all([F('/api/robot/status'),F('/api/stats')]);
+  document.getElementById('pills').innerHTML = `
+    <span class="pill"><span class="dot ${s.online?'on':''}"></span>robot ${s.online?'online':'offline'}</span>
+    <span class="pill">app <b>${s.app_state||'stopped'}</b></span>
+    <span class="pill">motors <b>${(s.motors||'—').toString().replace('MotorControlMode.','')}</b></span>
+    <span class="pill">loop <b>${s.control_hz||0} Hz</b></span>
+    <span class="pill">chunks <b>${st.chunks}</b></span>
+    <span class="pill">turns <b>${st.history_entries}</b></span>`;
+  document.getElementById('rstat').textContent =
+    `${s.host} · ${s.online?('daemon '+(s.version||'')+' · wlan '+(s.wlan_ip||'—')):(s.error||'unreachable')}`;
+  if(s.volume!=null){document.getElementById('vol').value=s.volume;
+    document.getElementById('volv').textContent=s.volume;}
+}
+loadCfg(); refreshLog(); status();
+setInterval(refreshLog,4000); setInterval(status,6000);
+</script>
+</body>
+</html>
