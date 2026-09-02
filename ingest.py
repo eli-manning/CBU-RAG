@@ -55,12 +55,33 @@ collection = client.get_or_create_collection(
 )
 
 
+# Filenames abbreviate the things people actually say. A plan titled
+# "..._ML_CONC" never contains the words "machine learning", so no amount of
+# retrieval tuning finds it -- the title has to say what the document is.
+_TITLE_EXPANSIONS = [
+    ("ML CONC", "Machine Learning Concentration"),
+    ("Cybersecurity CONC", "Cybersecurity Concentration"),
+    ("General CONC", "General Concentration"),
+    ("CONC", "Concentration"),
+    ("CBU CS", "CBU Computer Science"),
+    ("CoE", "College of Engineering"),
+    ("BASAI", "BASAI Bachelor of Applied Science in Artificial Intelligence"),
+    ("MSAI", "MSAI Master of Science in Artificial Intelligence"),
+    ("GE", "GE General Education"),
+    ("4 Year Plan", "four year course plan"),
+    ("3 Year Program", "three year course plan"),
+]
+
+
 def _title_for(source: str) -> str:
     """Human-readable document name, used as a per-chunk context header."""
     name = Path(source).name if not source.startswith("http") else source
     for ext in (".txt", ".pdf", ".docx", ".xlsx"):
         name = name.replace(ext, "")
-    return name.replace("_", " ").replace("-", " ").strip()
+    name = name.replace("_", " ").replace("-", " ").strip()
+    for short, long in _TITLE_EXPANSIONS:
+        name = re.sub(rf"\b{re.escape(short)}\b", long, name)
+    return re.sub(r"\s+", " ", name).strip()
 
 
 def _split_paragraphs(text: str) -> list[str]:
