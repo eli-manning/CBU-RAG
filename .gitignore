@@ -216,3 +216,15 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local TTS models (large binaries)
+voices/
+converted/
+
+# Local model weights (downloaded on demand)
+*.pt
+voices/kokoro/
+
+# Runtime state, not source
+lancer_config.json
+lancer_history.jsonl
