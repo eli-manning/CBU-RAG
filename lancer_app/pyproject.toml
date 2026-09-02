@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reachy_mini_lancer_app"
+version = "0.1.0"
+description = "Lancer - CBU's RAG-powered campus robot for Reachy Mini"
+requires-python = ">=3.10"
+dependencies = ["numpy", "requests"]
+
+[project.entry-points.reachy_mini_apps]
+reachy_mini_lancer_app = "reachy_mini_lancer_app.main:LancerApp"
+
+[project.scripts]
+reachy-mini-lancer-app = "reachy_mini_lancer_app.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
