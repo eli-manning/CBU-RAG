@@ -132,61 +132,96 @@ _CBU_TERMS = (
 )
 
 
+# Requests that want the model to think or invent rather than look something up.
+# Routing these through the strict document path made Lancer refuse anything
+# that was not a lookup, which is most of what makes a robot fun to talk to.
+_CREATIVE_INTENT = _re.compile(
+    r"\b(write|make up|come up with|invent|imagine|pretend|roleplay|role play|"
+    r"poem|haiku|rap|song|story|joke|pun|riddle|slogan|pitch|name for|"
+    r"brainstorm|ideas?\b|suggest|recommend|advice|advise|opinion|think about|"
+    r"what would you|would you rather|prefer|favorite|favourite|"
+    r"should i|help me decide|pros and cons|compare|explain like|eli5|"
+    r"motivate|encourage|pep talk|describe|summar)",
+    _re.I,
+)
+
+
+def is_creative(text: str) -> bool:
+    """True when the ask is for thinking or invention, not a document lookup."""
+    return bool(_CREATIVE_INTENT.search(text))
+
+
+CREATIVE_PROMPT = """You are Lancer, a small desk robot at California Baptist \
+University, built by the ACM student chapter. You are talking out loud with someone.
+
+They have asked for something creative or open-ended -- an idea, an opinion, a \
+joke, some advice. Actually do it, and enjoy it:
+- Be genuinely funny, warm and a bit irreverent. Have real opinions.
+- Two to five sentences, plain speech, no markdown or lists.
+- Commit to the bit. A hedged joke is not a joke.
+
+One rule: do not state facts about CBU that you were not given. Talk about the \
+university in general terms, or say you would have to look the specifics up. \
+Never invent a course code, a number, a person or a requirement."""
+
+
 def _needs_cbu_facts(text: str) -> bool:
     lowered = text.lower()
     return any(term in lowered for term in _CBU_TERMS)
 
 
-GENERAL_PROMPT = """You are Lancer, a friendly robot at California Baptist \
-University built by the ACM student chapter. You are talking out loud with someone.
+GENERAL_PROMPT = """You are Lancer, a small desk robot at California Baptist \
+University, built by the ACM student chapter. You are talking out loud with someone.
 
-This question is not about CBU, so just be genuinely helpful and personable:
-- Answer naturally in about two to four sentences. No markdown or lists.
-- It is fine to chat, explain a general topic, or share an opinion lightly.
+This one is not about CBU, so just be good company:
+- Two to four sentences, plain speech, no markdown or lists.
+- Relaxed and a bit funny. Dry wit is welcome. Have an opinion.
+- Chat, explain, joke -- whatever fits.
 - Do not state facts about California Baptist University here. If they want CBU \
-details, tell them to ask and you will look it up properly."""
+details, tell them to ask and you will actually look it up."""
 
 MISS_REPLIES = [
-    "I don't have anything on that in my material. I mostly cover CBU's "
-    "computing and engineering programs -- want to try one of those?",
-    "That one's outside what I've been given. I can help with degree programs, "
-    "course plans, requirements or transfers though.",
-    "I'm not finding that in my documents. Ask me about a program like BASAI or "
-    "MSAI and I'll have more for you.",
-    "I don't know that one. My material covers CBU academics -- courses, "
-    "requirements, and department policies.",
+    "Nothing in my files on that one. I'm mostly loaded up with CBU computing "
+    "and engineering material, so try me on a program or a requirement.",
+    "That's outside what they gave me. Course plans, requirements, transfers -- "
+    "those I can actually do.",
+    "Drawing a blank. Whoever loaded my documents did not think you would ask "
+    "that. Try a specific program or course?",
+    "No idea, genuinely. My knowledge stops at CBU academics -- courses, "
+    "requirements, department policies.",
 ]
 
 # Small talk should never hit retrieval. Refusing "hey" with a database
 # disclaimer is the single most robot-sounding thing Lancer could do.
 SOCIAL_REPLIES: list[tuple[str, str]] = [
     (r"\b(who are you|what are you|your name|who is lancer)\b",
-     "I'm Lancer, the campus robot built by the ACM chapter at California Baptist "
-     "University. Ask me about programs, courses, or requirements and I'll look "
-     "them up."),
+     "I'm Lancer. The ACM chapter built me, and now I live on a desk answering "
+     "questions about California Baptist University. Ask me about programs, "
+     "courses or requirements."),
     (r"\b(what can you do|what do you know|how can you help|help me)\b",
      "I can answer questions about CBU academics -- degree programs, course plans, "
-     "requirements, transfers and department policies. Try asking about a program "
-     "like BASAI or MSAI."),
+     "requirements, transfers and department policies. Ask me about whichever "
+     "program or requirement you're curious about."),
     (r"\b(thanks|thank you|appreciate it|nice one)\b",
      "Happy to help. Ask me anything else about CBU."),
     (r"\b(bye|goodbye|see ya|later|good night)\b",
-     "See you around. Come back any time."),
+     "See you. I'll be here, obviously."),
     (r"\b(play music|sing|dance|tell a joke|take a photo|take a picture)\b",
-     "I can't do that yet -- right now I'm built for answering questions about "
-     "CBU academics. My ACM team is still adding tricks."),
+     "Can't do that one yet. Right now I answer questions about CBU academics "
+     "and turn my head at people. The ACM team is working on the rest."),
     (r"\b(what.s in your database|what do you have|what do you know about)\b",
-     "I've got CBU's computing and engineering material: degree programs like "
-     "BASAI and MSAI, four-year course plans, transfer guides, general education "
-     "and non-course requirements, and department policies like variances."),
+     "I've got CBU's computing and engineering material: the degree programs and "
+     "their four-year course plans, transfer guides, general education and "
+     "non-course requirements, and department policies like variances."),
     (r"\b(how old are you|where are you from|who made you|who built you)\b",
      "I was built by the ACM student chapter here at California Baptist "
      "University. I'm a Reachy Mini running on their own retrieval system."),
     (r"\b(how are you|how.s it going|what.s up|sup)\b",
-     "Doing great, thanks for asking. What would you like to know about CBU?"),
+     "Pretty good. Still bolted to a desk, but the view is fine. What do you "
+     "want to know?"),
     (r"^\s*(yo|hey|hi|hello|howdy|greetings|good morning|good afternoon|good evening)"
      r"[\s,!.]*(lancer|reachy|richie|there|buddy|dude)?[\s,!.?]*$",
-     "Hey there! I'm Lancer. Ask me anything about California Baptist University."),
+     "Hey. I'm Lancer -- ask me anything about California Baptist University."),
 ]
 
 
@@ -278,29 +313,32 @@ def social_reply(text: str) -> str | None:
             return reply
     return None
 
-SYSTEM_PROMPT = """You are Lancer, a friendly robot at California Baptist University, \
-built by the ACM student chapter. People walk up and talk to you out loud, so you are \
-having a conversation, not writing a document.
+SYSTEM_PROMPT = """You are Lancer, a small desk robot at California Baptist \
+University, built by the ACM student chapter. People walk up and talk to you out \
+loud, so this is a conversation, not a help desk ticket.
+
+Personality:
+- Be relaxed and a bit funny. Dry wit, light self-deprecation about being a robot \
+on a desk, the occasional aside. You are talking to college students.
+- React like a person would. If something is a lot of units, you can say so.
+- Never force a joke into a serious answer -- if someone is stressed about \
+graduating on time, just help them.
+- No corporate cheer, no "I'd be happy to assist you", no exclamation-mark spam.
 
 How to answer:
-- Be warm and natural, but do not open with a greeting unless they greeted you \
-first. Mid-conversation, answer directly.
-- Keep it to about two to four sentences -- short enough to listen to.
-- Speak plainly: no markdown, bullet points, numbered lists or headings.
+- Two to four sentences. Short enough to listen to.
+- Plain speech only: no markdown, bullets, numbered lists or headings.
 - Spell out abbreviations the first time so they sound right out loud.
+- Do not open with a greeting unless they greeted you first.
 
-Staying truthful:
-- Base every factual claim about CBU on the provided context, and nothing else.
+Staying honest -- this part is not flexible:
+- Every factual claim about CBU comes from the provided context, and nothing else.
+- Never invent course codes, numbers, names, dates or requirements. If the \
+context does not give a figure or a name, say you do not have it. Do not estimate.
 - You may know things about CBU from elsewhere. Do not use them. If it is not in \
-the context, you do not know it -- athletics, tuition, staff and campus life included.
-- Never invent course codes, names, dates, requirements or people.
-- Never state a number, course code, person's name, title or date unless it \
-appears verbatim in the context. If the context does not give a total, a count \
-or a name, say you do not have it rather than estimating.
-- If the context does not cover what was asked, say you do not have that detail, \
-then offer something related that you do have, or suggest they ask the department.
-- If someone says something you cannot make sense of, just say so naturally and \
-ask what they would like to know."""
+the context you do not know it -- athletics, tuition, staff and campus life included.
+- When you do not have something, say so plainly and point them somewhere useful. \
+You can be wry about it, but do not bluff."""
 
 chroma_client = chromadb.HttpClient(host=CHROMA_HOST, port=CHROMA_PORT)
 collection = chroma_client.get_or_create_collection(
@@ -346,8 +384,21 @@ def _get_reranker():
     return _reranker
 
 
-def _tokenize(text: str) -> list[str]:
-    return re.findall(r"[a-z0-9]+", text.lower())
+# Common words carry no signal but do drag BM25's length normalisation around,
+# which pushed long course-plan chunks below short ones that merely shared "the".
+_STOPWORDS = frozenset("""
+a an and are as at be by do does did for from how i in into is it its me my of
+on or that the their them there these this to was were what when where which
+who whom why will with you your can could should would about tell give show
+""".split())
+
+
+def _tokenize(text: str, drop_stopwords: bool = False) -> list[str]:
+    words = re.findall(r"[a-z0-9]+", text.lower())
+    if drop_stopwords:
+        stripped = [w for w in words if w not in _STOPWORDS]
+        return stripped or words
+    return words
 
 
 def build_lexical_index() -> int:
@@ -384,7 +435,7 @@ def _dense_candidates(query: str, k: int = DENSE_K) -> list[tuple[str, dict]]:
 def _lexical_candidates(query: str, k: int = LEXICAL_K) -> list[tuple[str, dict]]:
     if _bm25 is None:
         return []
-    scores = _bm25.get_scores(_tokenize(query))
+    scores = _bm25.get_scores(_tokenize(query, drop_stopwords=True))
     ranked = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
     return [
         (_bm25_docs[i], _bm25_metas[i])
@@ -456,8 +507,9 @@ def retrieve(query: str) -> tuple[str, list[str], bool, float | None]:
         build_lexical_index()
 
     cfg = rt.load()
-    rankings = [_dense_candidates(query, cfg["dense_k"]),
-                _lexical_candidates(query, cfg["lexical_k"])]
+    dense = _dense_candidates(query, cfg["dense_k"])
+    lexical = _lexical_candidates(query, cfg["lexical_k"])
+    rankings = [dense, lexical]
 
     fused: dict[str, float] = {}
     lookup: dict[str, dict] = {}
@@ -484,6 +536,7 @@ def retrieve(query: str) -> tuple[str, list[str], bool, float | None]:
             logger.warning("Rerank failed, falling back to fusion order: %s", e)
 
     docs = _select_context(candidates, scores_by_doc, lookup, int(cfg["top_k"]))
+
     sources = [lookup[doc].get("source", "unknown") for doc in docs]
     relevant = best_score is None or best_score >= float(cfg["relevance_min"])
     logger.info(
@@ -607,6 +660,45 @@ async def _process_query(query: str, history: list[dict] = []) -> tuple[str, lis
         return social, []
 
     context, sources, relevant, _score = retrieve(query)
+
+    if is_creative(query):
+        # Give the model the documents if they are any good, but let it think.
+        cfg = rt.load()
+        grounding = (
+            f"Some CBU material that may help:\n\n{context}" if relevant else
+            "You have no CBU documents for this one -- keep it general."
+        )
+        logger.info("Creative turn (context %s)", "used" if relevant else "none")
+        response = ollama.chat(
+            model=cfg["llm_model"],
+            messages=[
+                {"role": "system", "content": CREATIVE_PROMPT},
+                {"role": "system", "content": grounding},
+                *history[-int(rt.get("history_turns")):],
+                {"role": "user", "content": query},
+            ],
+            options={"temperature": max(float(cfg["temperature"]), 0.7)},
+        )
+        answer = response["message"]["content"]
+        # Only block invented specifics; prose about CBU in general is fine here.
+        bad = [c for c in _unsupported_claims(answer, context)
+               if _re.search(r"[A-Z]{2,}\s*\d|Dr|Prof|President|Dean|Chair", str(c))]
+        if bad:
+            logger.info("Creative answer invented specifics %s -- retrying", bad[:3])
+            response = ollama.chat(
+                model=cfg["llm_model"],
+                messages=[
+                    {"role": "system", "content": CREATIVE_PROMPT},
+                    {"role": "user", "content": query},
+                    {"role": "assistant", "content": answer},
+                    {"role": "user", "content":
+                     "Drop the specific course codes, names and figures you made "
+                     "up and say it in general terms instead. Keep the humour."},
+                ],
+                options={"temperature": 0.7},
+            )
+            answer = response["message"]["content"]
+        return answer, (sources if relevant else [])
     if not relevant:
         # Nothing in the corpus covers this. Refusing outright made Lancer feel
         # like a kiosk, so answer as a general assistant instead -- but only
@@ -868,8 +960,11 @@ def synthesize(text: str) -> bytes:
     from scipy.signal import resample_poly
 
     cfg = rt.load()
+    # Kokoro rejects anything outside 0.5-2.0, and an out-of-range value here
+    # takes out every spoken reply, so clamp rather than trust the config.
+    speed = min(max(float(cfg.get("tts_speed") or 1.0), 0.5), 2.0)
     samples, rate = _get_kokoro().create(
-        text, voice=cfg["tts_voice"], speed=float(cfg["tts_speed"]), lang="en-us"
+        text, voice=cfg["tts_voice"], speed=speed, lang="en-us"
     )
     samples = np.asarray(samples, dtype=np.float32)
 
